@@ -1,24 +1,23 @@
-#![allow(unused_imports)]
-#![allow(unexpected_cfgs)]
-use anchor_lang::prelude::*;
-use crate::{state::VaultState, constants::ANCHOR_DISCRIMINATOR, error::ErrorCode};
+use anchor_lang::{
+    prelude::*,
+    system_program::{Transfer,transfer}
+};
+
+use crate::{constants::*, state::*, errors::*};
 
 #[derive(Accounts)]
 pub struct Initialize<'info>{
-    #[account(
-        mut
-    )]
-    pub user:Signer<'info>,
-
-
+    #[account(mut)]
+    pub signer:Signer<'info>,
+    
     #[account(
         init,
-        payer = user,
-        space = ANCHOR_DISCRIMINATOR + vault_state::INIT_SPACE,
-        seeds=[b"state",user.key().as_ref()],
-        bumps,
+        payer = signer,
+        space = ANCHOR_DISCRIMINATOR + VaultState::INIT_SPACE,
+        seeds=[b"state",signer.key().as_ref()],
+        bump
     )]
-    pub vault_state:Account<'info,VaultState>,
+    pub vault_state: Account<'info,VaultState>,
 
     #[account(
         mut,
@@ -27,36 +26,35 @@ pub struct Initialize<'info>{
     )]
     pub vault:SystemAccount<'info>,
 
-    pub system_program:Program<'info,System>
+    pub system_program:Program<'info,System>,
 }
 
 impl<'info> Initialize<'info>{
+     pub  fn initialize_vault(&mut self,bumps:&InitializeBumps)->Result<()>{
 
-    pub fn initialize_vault(&self,bumps:&InitializeBumps)->Result<()>{
-        let rent_excempt = Rent::get()?.minimum_balance(self.account.vault.to_account_info().date_len());
+        let rent = Rent::get()?.minimum_balance(self.vault_state.to_account_info().data_len());
 
-        let user_balance  = self.user.lamports();
+        let user_balance = self.signer.lamports();
 
-        require_gte!(
-            user_balance,
-            rent_excempt,initialize_vault
-            ErrorCode::InsufficientFunds
+        require!(
+            user_balance >= rent,
+            VaultError::InsufficientUserBalance
         );
 
         let cpi_program = self.system_program.to_account_info();
-
         let cpi_accounts = Transfer{
-            from:self.user.to_account_info(),
-            to:self.vault.to_account_info(),
+            from:self.signer.to_account_info(),
+            to:self.vault.to_account_info(),   
         };
 
-        let cpi_ctx = CpiContext::new(cpi_program,cpi_accounts);
-        transfer(cpi_ctx,rent_excempt)?;
+        let cpi_context = CpiContext::new(cpi_program,cpi_accounts);
 
+        transfer(cpi_context,rent)?;
 
-        self.vault_state.vault_bump = bumps.vault;
         self.vault_state.state_bump = bumps.vault_state;
+        self.vault_state.vault_bump = bumps.vault;
 
-        
+        Ok(())
+
     }
 }
